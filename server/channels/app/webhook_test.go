@@ -98,6 +98,36 @@ func TestHandleIncomingWebhookRootId(t *testing.T) {
 	})
 }
 
+func TestHandleIncomingWebhookRejectsDeactivatedOwner(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
+	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.EnableIncomingWebhooks = true })
+
+	hook, appErr := th.App.CreateIncomingWebhookForChannel(th.BasicUser.Id, th.BasicChannel, &model.IncomingWebhook{ChannelId: th.BasicChannel.Id})
+	require.Nil(t, appErr)
+	defer func() {
+		require.Nil(t, th.App.DeleteIncomingWebhook(hook.Id))
+	}()
+
+	// Control: the webhook works while its owner is active.
+	appErr = th.App.HandleIncomingWebhook(th.Context, hook.Id, &model.IncomingWebhookRequest{Text: "active owner"})
+	require.Nil(t, appErr)
+
+	_, appErr = th.App.UpdateActive(th.Context, th.BasicUser, false)
+	require.Nil(t, appErr)
+
+	blockedMessage := "inactive owner must not post " + model.NewId()
+	appErr = th.App.HandleIncomingWebhook(th.Context, hook.Id, &model.IncomingWebhookRequest{Text: blockedMessage})
+	require.NotNil(t, appErr, "an incoming webhook owned by an inactive user must be rejected")
+	assert.Equal(t, http.StatusForbidden, appErr.StatusCode)
+
+	posts, appErr := th.App.GetPosts(th.Context, th.BasicChannel.Id, 0, 100)
+	require.Nil(t, appErr)
+	for _, post := range posts.Posts {
+		assert.NotEqual(t, blockedMessage, post.Message, "a rejected webhook must not create a post")
+	}
+}
+
 func TestHandleIncomingWebhookInteractiveContentWithoutText(t *testing.T) {
 	mainHelper.Parallel(t)
 	th := Setup(t).InitBasic(t)

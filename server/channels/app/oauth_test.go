@@ -1530,6 +1530,62 @@ func TestOAuthRefreshTokenGrantRejectsDeactivatedUser(t *testing.T) {
 	require.Nil(t, refreshResp)
 }
 
+func TestOAuthGrantsRejectDeactivatedAppOwner(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
+
+	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.EnableOAuthServiceProvider = true })
+
+	oapp := &model.OAuthApp{
+		Name:         "DeactivatedOwner_" + model.NewRandomString(10),
+		CreatorId:    th.BasicUser2.Id,
+		Homepage:     "https://nowhere.com",
+		Description:  "test",
+		CallbackUrls: []string{"https://example.com/callback"},
+		ClientSecret: model.NewId(),
+	}
+	oapp, appErr := th.App.CreateOAuthApp(oapp)
+	require.Nil(t, appErr)
+
+	authRequest := &model.AuthorizeRequest{
+		ResponseType: model.AuthCodeResponseType,
+		ClientId:     oapp.Id,
+		RedirectURI:  oapp.CallbackUrls[0],
+		Scope:        "user",
+		State:        "test_state",
+	}
+
+	// Control: an application with an active owner can issue an authorization code.
+	redirectURL, appErr := th.App.AllowOAuthAppAccessToUser(th.Context, th.BasicUser.Id, authRequest)
+	require.Nil(t, appErr)
+	uri, parseErr := url.Parse(redirectURL)
+	require.NoError(t, parseErr)
+	code := uri.Query().Get("code")
+	require.NotEmpty(t, code)
+
+	_, appErr = th.App.UpdateActive(th.Context, th.BasicUser2, false)
+	require.Nil(t, appErr)
+
+	_, appErr = th.App.AllowOAuthAppAccessToUser(th.Context, th.BasicUser.Id, authRequest)
+	require.NotNil(t, appErr, "an OAuth app with an inactive owner must not issue new authorization codes")
+	assert.Equal(t, http.StatusForbidden, appErr.StatusCode)
+
+	response, appErr := th.App.GetOAuthAccessTokenForCodeFlow(
+		th.Context,
+		oapp.Id,
+		model.AccessTokenGrantType,
+		oapp.CallbackUrls[0],
+		code,
+		oapp.ClientSecret,
+		"",
+		"",
+		"",
+	)
+	require.NotNil(t, appErr, "a code issued before owner deactivation must not be exchangeable afterwards")
+	assert.Equal(t, http.StatusForbidden, appErr.StatusCode)
+	assert.Nil(t, response)
+}
+
 func TestOAuthImplicitGrantRejectsDeactivatedUser(t *testing.T) {
 	mainHelper.Parallel(t)
 	th := Setup(t).InitBasic(t)

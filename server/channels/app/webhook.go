@@ -1017,6 +1017,9 @@ func (a *App) HandleIncomingWebhook(rctx request.CTX, hookID string, req *model.
 	if resultU.NErr != nil {
 		return model.NewAppError("HandleIncomingWebhook", "web.incoming_webhook.user.app_error", map[string]any{"user": hook.UserId}, "", http.StatusForbidden).Wrap(resultU.NErr)
 	}
+	if resultU.Data.DeleteAt != 0 {
+		return model.NewAppError("HandleIncomingWebhook", "web.incoming_webhook.user.app_error", map[string]any{"user": hook.UserId}, "", http.StatusForbidden)
+	}
 
 	restrictedChannel := false
 	if channel.Type != model.ChannelTypeOpen {

@@ -228,6 +228,9 @@ func (a *App) AllowOAuthAppAccessToUser(rctx request.CTX, userID string, authReq
 			return "", model.NewAppError("AllowOAuthAppAccessToUser", "app.oauth.get_app.finding.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
 	}
+	if err := a.validateOAuthAppOwner(oauthApp); err != nil {
+		return "", err
+	}
 
 	if !oauthApp.IsValidRedirectURL(authRequest.RedirectURI) {
 		return "", model.NewAppError("AllowOAuthAppAccessToUser", "api.oauth.allow_oauth.redirect_callback.app_error", nil, "", http.StatusBadRequest)
@@ -279,6 +282,9 @@ func (a *App) GetOAuthAccessTokenForImplicitFlow(rctx request.CTX, userID string
 	if err != nil {
 		return nil, model.NewAppError("GetOAuthAccessToken", "api.oauth.get_access_token.credentials.app_error", nil, "", http.StatusNotFound).Wrap(err)
 	}
+	if err := a.validateOAuthAppOwner(oauthApp); err != nil {
+		return nil, err
+	}
 
 	user, err := a.GetUser(userID)
 	if err != nil {
@@ -312,6 +318,9 @@ func (a *App) GetOAuthAccessTokenForCodeFlow(rctx request.CTX, clientId, grantTy
 	if nErr != nil {
 		return nil, model.NewAppError("GetOAuthAccessToken", "api.oauth.get_access_token.credentials.app_error", nil, "", http.StatusNotFound).Wrap(nErr)
 	}
+	if err := a.validateOAuthAppOwner(oauthApp); err != nil {
+		return nil, err
+	}
 
 	if err := a.validateOAuthClient(oauthApp, grantType, secret, codeVerifier); err != nil {
 		return nil, err
@@ -322,6 +331,17 @@ func (a *App) GetOAuthAccessTokenForCodeFlow(rctx request.CTX, clientId, grantTy
 	}
 
 	return a.handleRefreshTokenGrant(rctx, oauthApp, refreshToken, resource)
+}
+
+func (a *App) validateOAuthAppOwner(oauthApp *model.OAuthApp) *model.AppError {
+	owner, nErr := a.Srv().Store().User().Get(context.Background(), oauthApp.CreatorId)
+	if nErr != nil {
+		return model.NewAppError("validateOAuthAppOwner", "api.oauth.get_access_token.credentials.app_error", nil, "", http.StatusForbidden).Wrap(nErr)
+	}
+	if owner.DeleteAt != 0 {
+		return model.NewAppError("validateOAuthAppOwner", "api.oauth.get_access_token.credentials.app_error", nil, "", http.StatusForbidden)
+	}
+	return nil
 }
 
 func (a *App) validateOAuthClient(oauthApp *model.OAuthApp, grantType, secret, codeVerifier string) *model.AppError {
