@@ -396,6 +396,18 @@ func TestStaticFilesCaching(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.Code)
 	require.Equal(t, fakeRootHTML, res.Body.String())
 	require.Equal(t, []string{"no-cache, max-age=31556926, public"}, res.Result().Header[http.CanonicalHeaderKey("Cache-Control")])
+	require.Equal(t, "SAMEORIGIN", res.Header().Get("X-Frame-Options"))
+	rootCSP := res.Header().Get("Content-Security-Policy")
+	require.Contains(t, rootCSP, "frame-ancestors 'self'")
+
+	req, err = http.NewRequest(http.MethodGet, "/static/root.html", nil)
+	require.NoError(t, err)
+	res = httptest.NewRecorder()
+	th.Web.MainRouter.ServeHTTP(res, req)
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Equal(t, fakeRootHTML, res.Body.String())
+	require.Equal(t, "SAMEORIGIN", res.Header().Get("X-Frame-Options"), "every route serving the application shell must prevent cross-origin framing")
+	require.Equal(t, rootCSP, res.Header().Get("Content-Security-Policy"), "every route serving the application shell must enforce the configured frame-ancestor policy")
 
 	// Checking for HEAD method as well.
 	req, err = http.NewRequest(http.MethodHead, "/", nil)

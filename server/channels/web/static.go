@@ -45,6 +45,7 @@ func (w *Web) InitStatic() {
 		}
 
 		w.MainRouter.PathPrefix("/static/plugins/").Handler(pluginHandler)
+		w.MainRouter.Handle("/static/root.html", w.NewStaticHandler(root)).Methods(http.MethodGet, http.MethodHead)
 		w.MainRouter.PathPrefix("/static/").Handler(staticHandler)
 		w.MainRouter.Handle("/robots.txt", http.HandlerFunc(robotsHandler))
 		w.MainRouter.Handle("/unsupported_browser.js", http.HandlerFunc(unsupportedBrowserScriptHandler))
