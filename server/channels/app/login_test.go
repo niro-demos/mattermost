@@ -6,13 +6,83 @@ package app
 import (
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/v8/channels/app/password/hashers"
 )
+
+func medianDuration(values []time.Duration) time.Duration {
+	sorted := append([]time.Duration(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted[len(sorted)/2]
+}
+
+func TestInvalidLoginTimingDoesNotRevealAccountExistence(t *testing.T) {
+	originalHasher := hashers.GetLatestHasher()
+	hashers.SetTestHasher(nil)
+	dummyLoginPasswordOnce = sync.Once{}
+	dummyLoginPasswordHasher = nil
+	t.Cleanup(func() {
+		hashers.SetTestHasher(originalHasher)
+		dummyLoginPasswordOnce = sync.Once{}
+		dummyLoginPasswordHasher = nil
+	})
+
+	th := Setup(t)
+
+	password := model.NewTestPassword()
+	user := &model.User{
+		Email:         "timing-" + model.NewId() + "@example.com",
+		Username:      "timing_" + model.NewId(),
+		Password:      password,
+		EmailVerified: true,
+	}
+	user, appErr := th.App.CreateUser(th.Context, user)
+	require.Nil(t, appErr)
+
+	// Control: password authentication for the disposable account is healthy.
+	authenticated, appErr := th.App.AuthenticateUserForLogin(th.Context, "", user.Username, password, "", "", false)
+	require.Nil(t, appErr)
+	require.Equal(t, user.Id, authenticated.Id)
+
+	wrongPassword := model.NewTestPassword()
+	missingLogin := "missing_" + model.NewId()
+	existingTimes := make([]time.Duration, 0, 3)
+	missingTimes := make([]time.Duration, 0, 3)
+
+	for i := 0; i < 3; i++ {
+		candidates := []struct {
+			loginID string
+			times   *[]time.Duration
+		}{
+			{loginID: missingLogin, times: &missingTimes},
+			{loginID: user.Username, times: &existingTimes},
+		}
+		if i%2 == 1 {
+			candidates[0], candidates[1] = candidates[1], candidates[0]
+		}
+
+		for _, candidate := range candidates {
+			start := time.Now()
+			loggedIn, err := th.App.AuthenticateUserForLogin(th.Context, "", candidate.loginID, wrongPassword, "", "", false)
+			*candidate.times = append(*candidate.times, time.Since(start))
+			require.Nil(t, loggedIn)
+			require.NotNil(t, err)
+		}
+	}
+
+	existingMedian := medianDuration(existingTimes)
+	missingMedian := medianDuration(missingTimes)
+	require.LessOrEqual(t, existingMedian, 2*missingMedian,
+		"invalid-login work must not reveal whether the supplied identifier exists (existing median %s, missing median %s)", existingMedian, missingMedian)
+}
 
 func TestCWSLogin(t *testing.T) {
 	mainHelper.Parallel(t)

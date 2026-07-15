@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/avct/uasurfer"
@@ -20,11 +21,34 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/public/shared/request"
+	"github.com/mattermost/mattermost/server/v8/channels/app/password/hashers"
+	"github.com/mattermost/mattermost/server/v8/channels/app/password/phcparser"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
 )
 
 const cwsTokenEnv = "CWS_CLOUD_TOKEN"
+
+var (
+	dummyLoginPasswordOnce   sync.Once
+	dummyLoginPasswordHasher hashers.PasswordHasher
+	dummyLoginPasswordHash   phcparser.PHC
+)
+
+func compareDummyLoginPassword(password string) {
+	dummyLoginPasswordOnce.Do(func() {
+		hash, err := hashers.Hash(model.NewId())
+		if err != nil {
+			return
+		}
+
+		dummyLoginPasswordHasher, dummyLoginPasswordHash, _ = hashers.GetHasherFromPHCString(hash)
+	})
+
+	if dummyLoginPasswordHasher != nil {
+		_ = dummyLoginPasswordHasher.CompareHashAndPassword(dummyLoginPasswordHash, password)
+	}
+}
 
 func (a *App) AuthenticateUserForLogin(rctx request.CTX, id, loginId, password, mfaToken, cwsToken string, ldapOnly bool) (user *model.User, err *model.AppError) {
 	// Do statistics
@@ -44,6 +68,7 @@ func (a *App) AuthenticateUserForLogin(rctx request.CTX, id, loginId, password, 
 
 	// Get the MM user we are trying to login
 	if user, err = a.GetUserForLogin(rctx, id, loginId); err != nil {
+		compareDummyLoginPassword(password)
 		return nil, err
 	}
 
