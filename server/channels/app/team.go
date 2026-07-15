@@ -758,6 +758,9 @@ func (a *App) AddUserToTeamByInviteId(rctx request.CTX, inviteId string, userID 
 		}
 	}
 	team := teamChanResult.Data
+	if team.DeleteAt != 0 {
+		return nil, nil, deletedTeamInviteError("AddUserToTeamByInviteId")
+	}
 
 	if team.IsGroupConstrained() {
 		return nil, nil, model.NewAppError("AddUserToTeamByInviteId", "app.team.invite_id.group_constrained.error", nil, "", http.StatusForbidden)
@@ -1026,8 +1029,15 @@ func (a *App) GetTeamByInviteId(inviteId string) (*model.Team, *model.AppError) 
 			return nil, model.NewAppError("GetTeamByInviteId", "app.team.get_by_invite_id.finding.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
 	}
+	if team.DeleteAt != 0 {
+		return nil, deletedTeamInviteError("GetTeamByInviteId")
+	}
 
 	return team, nil
+}
+
+func deletedTeamInviteError(where string) *model.AppError {
+	return model.NewAppError(where, "app.team.get_by_invite_id.finding.app_error", nil, "", http.StatusNotFound)
 }
 
 func (a *App) GetAllTeams() ([]*model.Team, *model.AppError) {
