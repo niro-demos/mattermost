@@ -635,3 +635,65 @@ func TestNoticeFetch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, views, 0)
 }
+
+func TestUpdateViewedProductNoticesValidatesNoticeIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		ids  func(model.ProductNotices) []string
+	}{
+		{
+			name: "unknown notice",
+			ids: func(_ model.ProductNotices) []string {
+				return []string{"unknown-notice"}
+			},
+		},
+		{
+			name: "duplicate notice",
+			ids: func(notices model.ProductNotices) []string {
+				return []string{notices[0].ID, notices[0].ID}
+			},
+		},
+		{
+			name: "excessive batch",
+			ids: func(notices model.ProductNotices) []string {
+				ids := make([]string, 100)
+				for i := range ids {
+					ids[i] = notices[i].ID
+				}
+				return ids
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			th := Setup(t).InitBasic(t)
+			notices := make(model.ProductNotices, 100)
+			for i := range notices {
+				notices[i] = model.ProductNotice{ID: fmt.Sprintf("notice-%03d", i)}
+			}
+			th.App.ch.cachedNotices = notices
+
+			appErr := th.App.UpdateViewedProductNotices(th.BasicUser.Id, test.ids(notices))
+			require.NotNil(t, appErr)
+			require.Equal(t, http.StatusBadRequest, appErr.StatusCode)
+
+			views, err := th.App.Srv().Store().ProductNotices().GetViews(th.BasicUser.Id)
+			require.NoError(t, err)
+			require.Empty(t, views)
+		})
+	}
+
+	t.Run("issued notice", func(t *testing.T) {
+		th := Setup(t).InitBasic(t)
+		th.App.ch.cachedNotices = model.ProductNotices{{ID: "issued-notice"}}
+
+		appErr := th.App.UpdateViewedProductNotices(th.BasicUser.Id, []string{"issued-notice"})
+		require.Nil(t, appErr)
+
+		views, err := th.App.Srv().Store().ProductNotices().GetViews(th.BasicUser.Id)
+		require.NoError(t, err)
+		require.Len(t, views, 1)
+		require.Equal(t, "issued-notice", views[0].NoticeId)
+	})
+}

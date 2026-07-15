@@ -23,6 +23,7 @@ import (
 
 const MaxRepeatViewings = 3
 const MinSecondsBetweenRepeatViewings = 60 * 60
+const MaxViewedProductNotices = 50
 
 // http request cache
 var noticesCache = utils.RequestCache{}
@@ -300,6 +301,26 @@ func (a *App) GetProductNotices(rctx request.CTX, userID, teamID string, client 
 
 // UpdateViewedProductNotices is called from the frontend to mark a set of notices as 'viewed' by user
 func (a *App) UpdateViewedProductNotices(userID string, noticeIds []string) *model.AppError {
+	if len(noticeIds) > MaxViewedProductNotices {
+		return model.NewAppError("UpdateViewedProductNotices", "api.system.update_viewed_notices.failed", nil, "too many notice IDs", http.StatusBadRequest)
+	}
+
+	validNoticeIDs := make(map[string]struct{}, len(a.ch.cachedNotices))
+	for _, notice := range a.ch.cachedNotices {
+		validNoticeIDs[notice.ID] = struct{}{}
+	}
+
+	seenNoticeIDs := make(map[string]struct{}, len(noticeIds))
+	for _, noticeID := range noticeIds {
+		if _, ok := validNoticeIDs[noticeID]; !ok {
+			return model.NewAppError("UpdateViewedProductNotices", "api.system.update_viewed_notices.failed", nil, "unknown notice ID", http.StatusBadRequest)
+		}
+		if _, duplicate := seenNoticeIDs[noticeID]; duplicate {
+			return model.NewAppError("UpdateViewedProductNotices", "api.system.update_viewed_notices.failed", nil, "duplicate notice ID", http.StatusBadRequest)
+		}
+		seenNoticeIDs[noticeID] = struct{}{}
+	}
+
 	if err := a.Srv().Store().ProductNotices().View(userID, noticeIds); err != nil {
 		return model.NewAppError("UpdateViewedProductNotices", "api.system.update_viewed_notices.failed", nil, "", http.StatusBadRequest).Wrap(err)
 	}
